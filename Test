@@ -1,0 +1,58 @@
+Here is a single, self-contained prompt you can paste directly into Cursor (or any AI assistant) to generate the architecture diagram, sequence diagram, and cost analysis for the compliance platform.
+
+```markdown
+# Single Prompt: Architecture Diagram, Sequence Diagram & Cost Analysis
+
+You are an expert cloud architect. Based on the following requirements, produce:
+
+1. **Architecture diagram** (Mermaid or PlantUML) showing all components, data flow, and interactions.
+2. **Sequence diagram** (Mermaid) for end-to-end flow: API request → sidecar capture → Kafka → consumer → S3 + Aurora + MongoDB → retrieval → compliance officer.
+3. **Detailed cost analysis** (monthly) for AWS deployment, assuming:
+   - 3 entities (drug, clinical, comm restrictions)
+   - Each entity: 5 million events/day (total 15M events/day)
+   - Average payload size: 10 KB
+   - Retention: S3 payloads 7 years, metadata 7 years in Aurora, hot cache in MongoDB 7 days
+   - Deployment in us-east-1, using MSK, Aurora Serverless v2, S3, Kinesis Firehose, MongoDB Atlas (M10), EC2 for consumer/retrieval API, etc.
+
+## Platform Requirements (Already Decided)
+
+- **Capture patterns**:
+  - HTTP APIs → Envoy sidecar (intercepts request/response, async publish to Kafka)
+  - Batch jobs / UI apps → local HTTP agent (Go binary) listening on localhost:9090, any language calls `POST /v1/record`
+- **Unified event bus**: Single Kafka topic `compliance.events`, 150 partitions, key = `{entity_type}_{consumer_name}`, retention 7 days, idempotent producer, acks=all, compression=lz4.
+- **Compliance consumer** (Python):
+  - Polls batches, hashes patient_id (HMAC‑SHA256 + per‑consumer pepper from Secrets Manager)
+  - Uploads raw payload to S3 (SSE‑KMS, Object Lock, WORM, 7‑year lifecycle)
+  - Inserts metadata into Aurora PostgreSQL (partitioned by date, indexed on entity_type+event_id, consumer_name+timestamp, patient_hash, searchable_attributes JSONB)
+  - Writes hot cache to MongoDB (7‑day TTL)
+- **Retrieval API** (FastAPI):
+  - JWT authentication, query by event_id / patient_hash / date, returns presigned S3 URLs (15‑min expiry), <200ms latency.
+- **Archival & analytics**: Kinesis Firehose (or Kafka Connect) writes Parquet to S3 archive, Glue + Athena for ad‑hoc queries.
+- **Deployment**: OpenShift/K8s sidecar, ECS task sidecar, on‑prem systemd. CI/CD with Jenkins + Quay.
+
+## What to Output
+
+1. **Architecture Diagram**: Mermaid `graph TD` or `flowchart TB` showing all components (API gateway, sidecar, local agent, Kafka, consumer, S3 payload, Aurora, MongoDB, Firehose, S3 archive, Glue, Athena, retrieval API, officer, analyst). Include labels for protocols (HTTP, Kafka, SQL, S3) and directional arrows.
+
+2. **Sequence Diagram**: Mermaid `sequenceDiagram` covering:
+   - API path: Client → Gateway → Sidecar → Kafka (async) → API → Sidecar → Kafka (async) → Client response.
+   - Batch/UI path: Batch → Agent → Kafka (async) → 202 Accepted.
+   - Compliance storage: Kafka → Consumer → S3 upload → Aurora insert → MongoDB cache → commit offset.
+   - Retrieval: Officer → API Gateway → Retrieval API → Aurora/Mongo → S3 presigned URL → download.
+
+3. **Cost Analysis**: Table with monthly costs for:
+   - MSK (3 brokers, m5.large, 150 partitions, 9 TB/month storage)
+   - Kinesis Firehose (15M events/day, JSON to Parquet, 9 TB/month output)
+   - S3 payload storage (9,000 GB new per month, accumulate 7 years, include storage and API requests)
+   - S3 archive (Firehose output, same volume)
+   - Aurora Serverless v2 (average 2 ACUs, storage 100 GB + growth)
+   - MongoDB Atlas (M10 dedicated)
+   - EC2 for consumer + retrieval API (2 t3.medium or equivalent Fargate)
+   - Glue crawler + Athena (assume 5 TB queries per month)
+   - Data transfer (within same region negligible)
+   - **Total monthly** and **first-year total**.
+
+Include assumptions and cost-saving recommendations (e.g., S3 lifecycle, partition pruning, Athena workgroups).
+```
+
+Copy this entire block into Cursor. It will produce the three outputs in one go.
